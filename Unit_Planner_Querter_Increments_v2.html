@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Unit Plan Organizer</title>
+  <style>
+    body { font-family: Arial,Helvetica,sans-serif; margin:20px; background: #fff; }
+    h1,h2 { color:#333 }
+    .top-bar { margin-bottom:15px }
+
+    /* Units: no gaps, shared borders */
+    .unit {
+      border:1px solid #ccc;
+      border-bottom:none; /* visually connect units */
+      padding:5px;
+      margin-bottom:0; /* no gap between units */
+      display:block;
+    }
+    .unit:last-child {
+      border-bottom:1px solid #ccc; /* bottom border for last unit */
+    }
+
+    /* First row of unit layout */
+    .unit-content {
+      display:flex;
+      align-items:center;
+      justify-content:flex-start;
+    }
+
+    /* Push toggle to far right */
+    .toggle-container {
+      display:flex;
+      align-items:center;
+      margin-left:auto;
+    }
+
+    /* Subunits: no gaps, lighter background based on parent color */
+    .subunit {
+      padding:5px;
+      margin-bottom:0; /* no gap between subunits */
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin-left:40px;
+    }
+    .subunit:last-child {
+      margin-bottom:0;
+    }
+    .subunit-content { display:flex; align-items:center }
+
+    .color-box { width:15px; height:15px; margin-right:10px }
+    .subunit .color-box { width:12px; height:12px }
+
+    input[type="text"] { width:350px; margin-left:5px }
+    input[type="number"] { width:60px; margin-left:5px }
+    button { margin-left:8px }
+
+    /* ==== GRID-BASED PROGRESS BAR ==== */
+    .progress {
+      display: grid;
+      gap: 0;
+      margin: 10px 0;
+      width: 100%;
+      border: 1px solid #ccc;
+    }
+    .progress-segment {
+      height: 20px;
+      border: 1px solid #ccc;
+      box-sizing: border-box;
+    }
+
+    label { margin-right:5px }
+  </style>
+</head>
+<body>
+  <h1>Unit Plan Organizer</h1>
+
+  <div class="top-bar">
+    <label for="planSelector"><strong>Unit plan:</strong></label>
+    <select id="planSelector" onchange="loadPlan(this.value)"></select>
+    <button onclick="createNewPlan()">New Plan</button>
+    <button onclick="renameCurrentPlan()">Rename</button>
+    <button onclick="deleteCurrentPlan()">Delete</button>
+  </div>
+
+  <div>
+    <label for="totalDays">Total days in term:</label>
+    <input type="number" id="totalDays" value="82" min="1" oninput="updateSummary()">
+    <label style="margin-left:10px;">
+      <input type="checkbox" id="useRemaining" onchange="updateSummary()"> Use remaining days from today
+    </label>
+  </div>
+
+  <div id="unitsContainer"></div>
+  <button onclick="addUnit()">Add Unit</button>
+
+  <h2>Summary</h2>
+  <p id="daysAllocated">Days allocated: 0</p>
+  <p id="daysRemaining">Days remaining: 0</p>
+  <div class="progress" id="progress"></div>
+
+<script>
+/*************  CONFIG  *************/
+
+const classDates = [
+  '2025-01-30','2025-01-31',
+  '2025-02-03','2025-02-04','2025-02-05','2025-02-10','2025-02-11','2025-02-12','2025-02-13','2025-02-14',
+  '2025-02-18','2025-02-19','2025-02-20','2025-02-21','2025-02-24','2025-02-25','2025-02-26','2025-02-27','2025-02-28',
+  '2025-03-03','2025-03-04','2025-03-05','2025-03-06','2025-03-10','2025-03-11','2025-03-12','2025-03-13','2025-03-14',
+  '2025-03-17','2025-03-18','2025-03-19','2025-03-20','2025-03-31',
+  '2025-04-01','2025-04-02','2025-04-03','2025-04-04','2025-04-07','2025-04-08','2025-04-09','2025-04-10','2025-04-11',
+  '2025-04-14','2025-04-15','2025-04-16','2025-04-17','2025-04-22','2025-04-23','2025-04-24','2025-04-25','2025-04-28',
+  '2025-04-29','2025-04-30',
+  '2025-05-01','2025-05-05','2025-05-06','2025-05-07','2025-05-08','2025-05-09','2025-05-12','2025-05-13','2025-05-14',
+  '2025-05-15','2025-05-16','2025-05-20','2025-05-21','2025-05-22','2025-05-23','2025-05-26','2025-05-27','2025-05-28',
+  '2025-05-29','2025-05-30',
+  '2025-06-02','2025-06-03','2025-06-04','2025-06-05','2025-06-06','2025-06-09','2025-06-10','2025-06-11','2025-06-12',
+  '2025-06-13','2025-06-16'
+];
+
+function getRemainingDays() {
+  const todayStr = new Date().toISOString().split("T")[0];
+  const completedDays = classDates.filter(d => d <= todayStr).length;
+  const totalDays = classDates.length;
+  return Math.max(totalDays - completedDays, 0);
+}
+
+const unitColors = ['#FF8A80','#80D8FF','#CCFF90','#FFD180','#CF93D9','#F48FB1','#B39DDB','#90CAF9','#A5D6A7','#FFAB91'];
+
+/*************  STATE  *************/
+let currentPlanName = null, colorCounter = 0;
+const STORAGE_KEY = 'unitPlans';
+
+/*************  STORAGE  *************/
+const getPlans = () => JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+const setPlans = obj => localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+
+/*************  PLAN CRUD  *************/
+function loadPlanList(){
+  const sel = document.getElementById('planSelector'); sel.innerHTML = '';
+  const plans = getPlans();
+  Object.keys(plans).forEach(name => {
+    const o = document.createElement('option'); o.value = name; o.textContent = name;
+    sel.appendChild(o);
+  });
+  if(sel.options.length){ sel.value = sel.options[0].value; loadPlan(sel.value); }
+  else createNewPlan('My First Plan');
+}
+function createNewPlan(initial){
+  const name = initial||prompt('Name for this plan:'); if(!name) return;
+  const plans = getPlans(); if(plans[name]){ alert('Plan exists'); return; }
+  plans[name] = { totalDays:82, units:[] };
+  setPlans(plans); loadPlanList();
+  document.getElementById('planSelector').value = name;
+  loadPlan(name);
+}
+function renameCurrentPlan(){
+  if(!currentPlanName) return;
+  const newName = prompt('New name:',currentPlanName);
+  if(!newName||newName===currentPlanName) return;
+  const plans = getPlans(); if(plans[newName]){ alert('Name taken'); return; }
+  plans[newName]=plans[currentPlanName]; delete plans[currentPlanName];
+  setPlans(plans); currentPlanName=newName;
+  loadPlanList(); document.getElementById('planSelector').value=newName;
+}
+function deleteCurrentPlan(){
+  if(!currentPlanName||!confirm('Delete this plan permanently?')) return;
+  const plans = getPlans(); delete plans[currentPlanName]; setPlans(plans);
+  currentPlanName=null; loadPlanList();
+}
+function loadPlan(name){
+  currentPlanName=name;
+  const plan=getPlans()[name]; if(!plan) return;
+  document.getElementById('unitsContainer').innerHTML=''; colorCounter=0;
+  document.getElementById('totalDays').value=plan.totalDays;
+  plan.units.forEach(u=> addUnit(u.name,u.days,u.visible,u.color,u.subunits||[]));
+  updateSummary();
+}
+function savePlan(){
+  if(!currentPlanName) return;
+  const plans=getPlans();
+  plans[currentPlanName]={
+    totalDays:parseInt(document.getElementById('totalDays').value)||0,
+    units:getUnitData()
+  };
+  setPlans(plans);
+}
+
+/*************  UNIT HELPERS  *************/
+const nextColor=()=>unitColors[colorCounter++%unitColors.length];
+function getUnitData(){
+  const data=[];
+  document.querySelectorAll('.unit').forEach(unit=>{
+    const name=unit.querySelector('.unit-content input[type="text"]').value;
+    const days=parseInt(unit.querySelector('.unit-content input[type="number"]').value)||0;
+    const visible=unit.querySelector('.toggle-container input').checked;
+    const color=unit.dataset.color;
+    const subs=[];
+    unit.querySelectorAll('.subunit').forEach(su=>{
+      subs.push({
+        name:su.querySelector('input[type="text"]').value,
+        days:parseInt(su.querySelector('input[type="number"]').value)||0
+      });
+    });
+    data.push({name,days,visible,color,subunits:subs});
+  });
+  return data;
+}
+
+/*************  UI BUILDERS  *************/
+function addUnit(name='',days=0,visible=true,color=null,subunits=[]){
+  const container=document.getElementById('unitsContainer');
+  const unitDiv=document.createElement('div');
+  unitDiv.className='unit';
+  color=color||nextColor();
+  unitDiv.dataset.color=color;
+  unitDiv.style.background = lightenColor(color, 80); // lighter background for unit
+
+  const content=document.createElement('div');content.className='unit-content';
+  const cb=document.createElement('div');cb.className='color-box';cb.style.background=color;
+  const lbl=document.createElement('span');lbl.textContent='Unit: ';
+  const nameIn=document.createElement('input');nameIn.type='text';nameIn.value=name;
+  const daysLbl=document.createElement('span');daysLbl.textContent=' Days: ';
+  const daysIn=document.createElement('input');daysIn.type='number';daysIn.min='0';daysIn.step='0.25';daysIn.value=days;
+  [nameIn,daysIn].forEach(el=>el.oninput=updateSummary);
+
+  const up=document.createElement('button');up.textContent='↑';up.title='Move up';
+  up.onclick=()=>{const p=unitDiv.previousElementSibling;if(p)container.insertBefore(unitDiv,p);updateSummary();};
+  const down=document.createElement('button');down.textContent='↓';down.title='Move down';
+  down.onclick=()=>{const n=unitDiv.nextElementSibling;if(n)container.insertBefore(n,unitDiv);updateSummary();};
+  const rem=document.createElement('button');rem.textContent='Remove';rem.onclick=()=>{unitDiv.remove();updateSummary();};
+
+  const addSub=document.createElement('button');addSub.textContent='+ Subunit';
+  const subContainer=document.createElement('div');subContainer.className='subunits';
+  addSub.onclick=()=>{addSubUnitRow('',0,color,subContainer);updateSummary();};
+
+  const toggleWrap = document.createElement('div');
+  toggleWrap.className = 'toggle-container';
+  const tLbl = document.createElement('label');
+  tLbl.textContent = 'Include: ';
+  const tIn = document.createElement('input');
+  tIn.type = 'checkbox';
+  tIn.checked = visible;
+  tIn.onchange = updateSummary;
+  tLbl.appendChild(tIn);
+  toggleWrap.appendChild(tLbl);
+
+  content.append(cb, lbl, nameIn, daysLbl, daysIn, up, down, rem, addSub, toggleWrap);
+  unitDiv.append(content, subContainer);
+  
+  container.appendChild(unitDiv);
+
+  subunits.forEach(su=>addSubUnitRow(su.name,su.days,color,subContainer));
+}
+
+function addSubUnitRow(name='',days=0,color,parent){
+  const su=document.createElement('div');su.className='subunit';
+  su.style.background = lightenColor(color, 90); // lighter than unit color
+
+  const suContent=document.createElement('div');suContent.className='subunit-content';
+  const cb=document.createElement('div');cb.className='color-box';cb.style.background=color;
+  const lbl=document.createElement('span');lbl.textContent='Sub: ';
+  const nIn=document.createElement('input');nIn.type='text';nIn.value=name;
+  const dLbl=document.createElement('span');dLbl.textContent=' Days: ';
+  const dIn=document.createElement('input');dIn.type='number';dIn.min='0';dIn.step='0.25';dIn.value=days;
+  [nIn,dIn].forEach(el=>el.oninput=updateSummary);
+
+  const up=document.createElement('button');up.textContent='↑';up.onclick=()=>{const p=su.previousElementSibling;if(p)parent.insertBefore(su,p);updateSummary();};
+  const down=document.createElement('button');down.textContent='↓';down.onclick=()=>{const n=su.nextElementSibling;if(n)parent.insertBefore(n,su);updateSummary();};
+  const rem=document.createElement('button');rem.textContent='Remove';rem.onclick=()=>{su.remove();updateSummary();};
+
+  const includeWrap = document.createElement('div');
+  includeWrap.style.marginLeft = '10px';
+  const includeLbl = document.createElement('label');
+  includeLbl.textContent = 'Include: ';
+  const includeIn = document.createElement('input');
+  includeIn.type = 'checkbox';
+  includeIn.checked = true;
+  includeIn.onchange = updateSummary;
+  includeLbl.appendChild(includeIn);
+  includeWrap.appendChild(includeLbl);
+
+  suContent.append(cb,lbl,nIn,dLbl,dIn,up,down,rem,includeWrap);
+  su.appendChild(suContent);
+  parent.appendChild(su);
+}
+
+/*************  SUMMARY  *************/
+function updateSummary(){
+  let total;
+  const useRemaining = document.getElementById('useRemaining').checked;
+  const totalDaysInput = document.getElementById('totalDays');
+  if (useRemaining) {
+    total = getRemainingDays();
+    totalDaysInput.disabled = true;
+    totalDaysInput.value = total;
+  } else {
+    totalDaysInput.disabled = false;
+    total = parseInt(totalDaysInput.value) || 0;
+  }
+  const prog=document.getElementById('progress');prog.innerHTML='';prog.style.gridTemplateColumns=`repeat(${total},1fr)`;
+  let alloc=0;
+
+  document.querySelectorAll('.unit').forEach(unit=>{
+    const unitIncluded = unit.querySelector('.toggle-container input').checked;
+    let sum=0;
+    const subEls=unit.querySelectorAll('.subunit');
+    if(subEls.length>0){
+      subEls.forEach(su=>{
+        const include = su.querySelector('input[type="checkbox"]');
+        if (include && include.checked) {
+          const dIn = su.querySelector('input[type="number"]');
+          sum += parseFloat(dIn.value)||0;
+        }
+      });
+      const parentIn=unit.querySelector('.unit-content input[type="number"]');
+      parentIn.value=sum; parentIn.disabled=true;
+    } else {
+      const parentIn=unit.querySelector('.unit-content input[type="number"]');
+      sum=parseFloat(parentIn.value)||0; parentIn.disabled=false;
+    }
+    if(!unitIncluded) return;
+    alloc+=sum;
+    for(let i=0;i<Math.floor(sum) && i<total;i++){
+      const seg=document.createElement('div');seg.className='progress-segment';seg.style.background=unit.dataset.color;
+      prog.appendChild(seg);
+    }
+  });
+  for(let i=alloc;i<total;i++){
+    const seg=document.createElement('div');seg.className='progress-segment';seg.style.background='#e0e0e0';prog.appendChild(seg);
+  }  
+
+  const remain=total-alloc;
+  document.getElementById('daysAllocated').textContent='Days allocated: '+Number(alloc.toFixed(2));
+  document.getElementById('daysRemaining').textContent='Days remaining: '+Number(remain.toFixed(2));
+  savePlan();
+}
+
+function lightenColor(hex, percent) {
+  const num = parseInt(hex.replace('#',''),16);
+  let r = (num >> 16) + Math.round((255 - (num >> 16)) * percent/100);
+  let g = ((num >> 8) & 0x00FF) + Math.round((255 - ((num >> 8) & 0x00FF)) * percent/100);
+  let b = (num & 0x0000FF) + Math.round((255 - (num & 0x0000FF)) * percent/100);
+  return `rgb(${r},${g},${b})`;
+}
+
+/*************  INIT  *************/
+window.addEventListener('load',loadPlanList);
+</script>
+</body>
+</html>
